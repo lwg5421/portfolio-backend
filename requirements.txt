@@ -1,0 +1,7 @@
+# requirements.txt
+Flask
+Flask-Cors
+requests
+python-dotenv
+gunicorn
+lxml

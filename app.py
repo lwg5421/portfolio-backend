@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 from dotenv import load_dotenv
-from lxml import etree  # [추가] lxml 라이브러리
+from lxml import etree  # lxml 라이브러리
 
 # ----------------------------
 # 로깅 설정
@@ -51,7 +51,7 @@ retries = Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 50
 session.mount('https://', HTTPAdapter(max_retries=retries))
 session.mount('http://', HTTPAdapter(max_retries=retries))
 
-# === [추가] CORPCODE.xml 로드 및 준비 ===
+# === CORPCODE.xml 로드 및 준비 ===
 CORP_XML_PATH = 'CORPCODE.xml'
 corp_name_map = {} # 기업명 -> 기업코드로 빠르게 찾기 위한 딕셔너리(지도)
 
@@ -59,7 +59,6 @@ try:
     if os.path.exists(CORP_XML_PATH):
         logger.info(f"{CORP_XML_PATH} 파일 로드를 시작합니다...")
         # lxml의 iterparse를 사용해 메모리를 아끼며 파싱
-        # 참고: Render 서버 빌드 명령어에서 이 파일을 다운로드해야 합니다.
         context = etree.iterparse(CORP_XML_PATH, events=('end',), tag='list')
         for event, elem in context:
             corp_name = elem.findtext('corp_name')
@@ -83,6 +82,7 @@ except Exception as e:
 
 # === API 엔드포인트 ===
 DART_API_URL = 'https://opendart.fss.or.kr/api'
+# [수정됨] v1beta -> v1
 GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1/models'
 
 
@@ -95,7 +95,7 @@ def dart_get(path: str, params: dict, timeout: int = 10):
     return response.json()
 
 
-# === [새로 추가] 기업명으로 코드 검색 API ===
+# === 기업명으로 코드 검색 API ===
 @app.get('/api/search')
 def search_company_code():
     """기업명으로 기업 코드 검색"""
@@ -207,6 +207,7 @@ def collect_all_texts(gemini_obj) -> str:
     return "\n".join(texts).strip()
 
 
+# [수정됨] v1 API 스펙(snake_case)에 맞게 call_gemini 함수 수정
 def call_gemini(prompt: str, model: str = None, timeout: int = 60):
     """Gemini API 호출 (v1 generateContent)"""
     model = model or GEMINI_MODEL
@@ -221,9 +222,11 @@ def call_gemini(prompt: str, model: str = None, timeout: int = 60):
         "generationConfig": {
             "temperature": 0.3,
             "maxOutputTokens": 4096,
-            "responseMimeType": "application/json",
+            # "responseMimeType" -> "response_mime_type"
+            "response_mime_type": "application/json", 
         },
-        "systemInstruction": {
+        # "systemInstruction" -> "system_instruction"
+        "system_instruction": { 
             "parts": [{
                 "text": "You are a helpful assistant that generates company analysis data in JSON format. All textual content in the JSON values MUST be written in Korean."
             }]
@@ -364,6 +367,4 @@ def generate_qualitative_analysis():
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
-
     app.run(host='0.0.0.0', port=port, debug=False)
-

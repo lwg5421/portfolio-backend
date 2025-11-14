@@ -208,7 +208,7 @@ def collect_all_texts(gemini_obj) -> str:
 
 
 def call_gemini(prompt: str, model: str = None, timeout: int = 60):
-    """Gemini API 호출 (v1beta generateContent)"""
+    """Gemini API 호출 (v1 generateContent)"""
     model = model or GEMINI_MODEL
     url = f"{GEMINI_URL_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
     
@@ -366,3 +366,4 @@ if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
 
     app.run(host='0.0.0.0', port=port, debug=False)
+

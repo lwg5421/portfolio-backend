@@ -83,7 +83,7 @@ except Exception as e:
 
 # === API 엔드포인트 ===
 DART_API_URL = 'https://opendart.fss.or.kr/api'
-GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1/models'
 
 
 def dart_get(path: str, params: dict, timeout: int = 10):
@@ -364,4 +364,5 @@ def generate_qualitative_analysis():
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
+
     app.run(host='0.0.0.0', port=port, debug=False)

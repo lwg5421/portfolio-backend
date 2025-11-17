@@ -58,19 +58,17 @@ corp_name_map = {} # 기업명 -> 기업코드로 빠르게 찾기 위한 딕셔
 try:
     if os.path.exists(CORP_XML_PATH):
         logger.info(f"{CORP_XML_PATH} 파일 로드를 시작합니다...")
-        # lxml의 iterparse를 사용해 메모리를 아끼며 파싱
         context = etree.iterparse(CORP_XML_PATH, events=('end',), tag='list')
         for event, elem in context:
             corp_name = elem.findtext('corp_name')
             corp_code = elem.findtext('corp_code')
             if corp_name and corp_code:
-                # (주) 같은 문자를 제거하고 깨끗한 이름으로 저장
                 clean_name = corp_name.replace('(주)', '').strip()
                 corp_name_map[clean_name] = {
                     "code": corp_code,
                     "original_name": corp_name
                 }
-            elem.clear() # 메모리에서 엘리먼트 정리
+            elem.clear() 
         del context
         logger.info(f"성공: {len(corp_name_map)}개의 기업 정보를 로드했습니다.")
     else:
@@ -82,7 +80,7 @@ except Exception as e:
 
 # === API 엔드포인트 ===
 DART_API_URL = 'https://opendart.fss.or.kr/api'
-# [수정됨] v1beta -> v1
+# [수정됨] v1 주소는 유지 (이건 맞습니다)
 GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1/models'
 
 
@@ -107,8 +105,6 @@ def search_company_code():
          return jsonify({'status': '500', 'message': '서버에 기업 목록(XML)이 로드되지 않았습니다.'}), 500
 
     clean_query = company_name.replace('(주)', '').strip()
-    
-    # 딕셔너리(corp_name_map)에서 바로 검색 (매우 빠름)
     result = corp_name_map.get(clean_query)
     
     if result:
@@ -147,11 +143,9 @@ def get_company_finance():
     if not corp_code or not year:
         return jsonify({'status': '400', 'message': '기업 코드와 사업 연도가 필요합니다.'}), 400
     try:
-        # 1. 연결재무제표(CFS) 시도
         params = {'corp_code': corp_code, 'bsns_year': year, 'reprt_code': reprt_code, 'fs_div': 'CFS'}
         data = dart_get('fnlttSinglAcntAll.json', params)
         
-        # 2. 연결재무제표 결과가 없으면 별도재무제표(OFS)로 폴백
         if data.get('status') != '000' or not data.get('list'):
             logger.info(f"{corp_code}의 연결재무제표가 없어 별도재무제표를 조회합니다.")
             params['fs_div'] = 'OFS'
@@ -168,29 +162,19 @@ def extract_first_json(text: str) -> str:
     if not text: return ''
     start = text.find('{')
     if start == -1: return ''
-    
-    depth = 0
-    in_string = False
-    escape = False
-    
+    depth, in_string, escape = 0, False, False
     for i in range(start, len(text)):
         char = text[i]
         if in_string:
-            if escape:
-                escape = False
-            elif char == '\\':
-                escape = True
-            elif char == '"':
-                in_string = False
+            if escape: escape = False
+            elif char == '\\': escape = True
+            elif char == '"': in_string = False
         else:
-            if char == '"':
-                in_string = True
-            elif char == '{':
-                depth += 1
+            if char == '"': in_string = True
+            elif char == '{': depth += 1
             elif char == '}':
                 depth -= 1
-                if depth == 0:
-                    return text[start:i+1]
+                if depth == 0: return text[start:i+1]
     return ''
 
 
@@ -207,7 +191,7 @@ def collect_all_texts(gemini_obj) -> str:
     return "\n".join(texts).strip()
 
 
-# [수정됨] v1 API 스펙(snake_case)에 맞게 call_gemini 함수 수정
+# [수정됨] v1 API 스펙에 맞게 camelCase로 되돌림
 def call_gemini(prompt: str, model: str = None, timeout: int = 60):
     """Gemini API 호출 (v1 generateContent)"""
     model = model or GEMINI_MODEL
@@ -222,11 +206,11 @@ def call_gemini(prompt: str, model: str = None, timeout: int = 60):
         "generationConfig": {
             "temperature": 0.3,
             "maxOutputTokens": 4096,
-            # "responseMimeType" -> "response_mime_type"
-            "response_mime_type": "application/json", 
+            # "response_mime_type" -> "responseMimeType" (camelCase로 복구)
+            "responseMimeType": "application/json", 
         },
-        # "systemInstruction" -> "system_instruction"
-        "system_instruction": { 
+        # "system_instruction" -> "systemInstruction" (camelCase로 복구)
+        "systemInstruction": { 
             "parts": [{
                 "text": "You are a helpful assistant that generates company analysis data in JSON format. All textual content in the JSON values MUST be written in Korean."
             }]
@@ -287,7 +271,6 @@ def generate_qualitative_analysis():
 }
 """.strip()
     
-    # === [수정됨] 한국어 응답을 강제하는 프롬프트 ===
     prompt = (
         "당신은 DART 공시 정보를 기반으로 기업을 심층 분석하는 AI 애널리스트입니다.\n"
         f"분석 대상 기업은 '{company_name}({biz_area})'이며, 지원 직무는 '프론트엔드 개발자'입니다.\n"
@@ -320,9 +303,8 @@ def generate_qualitative_analysis():
                     return jsonify(json.loads(json_part))
         except json.JSONDecodeError as e:
             logger.warning(f"1차 Gemini 응답 JSON 파싱 실패: {e}\n원본: {text_content[:500]}")
-            # 파싱 실패 시 2차 복구 호출로 넘어감
 
-        # === 2차 복구 호출 (더욱 강력한 JSON 형식 및 한국어 강제 프롬프트) ===
+        # === 2차 복구 호출 ===
         logger.info("1차 분석 실패, JSON 형식 복구를 위한 2차 호출을 시도합니다.")
         repair_prompt = (
             "이전 API 응답이 유효한 JSON이 아닙니다. 아래 원본 텍스트를 분석하여 주어진 JSON 스키마에 맞는 '순수한 JSON 객체'로 복구해주세요.\n"

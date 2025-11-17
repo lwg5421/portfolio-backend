@@ -25,8 +25,7 @@ app = Flask(__name__)
 # === 환경변수 로드 및 검증 ===
 DART_API_KEY = os.getenv('DART_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-# [수정됨] v1beta가 확실히 아는 'gemini-pro' 모델로 변경
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-pro') 
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.0-pro')
 if not DART_API_KEY or not GEMINI_API_KEY:
     logger.error('환경변수 DART_API_KEY 또는 GEMINI_API_KEY가 설정되지 않았습니다.')
     raise RuntimeError('DART_API_KEY와 GEMINI_API_KEY 환경변수가 필요합니다.')
@@ -350,3 +349,4 @@ def generate_qualitative_analysis():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, debug=False)
+

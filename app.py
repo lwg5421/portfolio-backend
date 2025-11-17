@@ -25,7 +25,8 @@ app = Flask(__name__)
 # === 환경변수 로드 및 검증 ===
 DART_API_KEY = os.getenv('DART_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash-latest') # 최신 모델을 기본값으로 사용
+# [수정됨] v1beta가 확실히 아는 'gemini-pro' 모델로 변경
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-pro') 
 if not DART_API_KEY or not GEMINI_API_KEY:
     logger.error('환경변수 DART_API_KEY 또는 GEMINI_API_KEY가 설정되지 않았습니다.')
     raise RuntimeError('DART_API_KEY와 GEMINI_API_KEY 환경변수가 필요합니다.')
@@ -34,8 +35,9 @@ if not DART_API_KEY or not GEMINI_API_KEY:
 env_origins = os.getenv("ALLOWED_ORIGINS")
 ALLOWED_ORIGINS = (
     [o.strip() for o in env_origins.split(",")] if env_origins
-    else ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5500', 'http://127.0.0.1:5500']
+    else ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5500', 'http://1.2.3.4'] # 1.2.3.4는 임시
 )
+# Render에서 설정한 환경변수를 사용하도록 수정
 CORS(
     app,
     resources={r"/api/*": {"origins": ALLOWED_ORIGINS}},
@@ -80,8 +82,8 @@ except Exception as e:
 
 # === API 엔드포인트 ===
 DART_API_URL = 'https://opendart.fss.or.kr/api'
-# [수정됨] v1 주소는 유지 (이건 맞습니다)
-GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1/models'
+# [수정됨] v1beta 주소로 복구
+GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 
 
 def dart_get(path: str, params: dict, timeout: int = 10):
@@ -191,9 +193,9 @@ def collect_all_texts(gemini_obj) -> str:
     return "\n".join(texts).strip()
 
 
-# [수정됨] v1 API 스펙에 맞게 camelCase로 되돌림
+# [수정됨] v1beta API 스펙에 맞는 camelCase 문법으로 복구
 def call_gemini(prompt: str, model: str = None, timeout: int = 60):
-    """Gemini API 호출 (v1 generateContent)"""
+    """Gemini API 호출 (v1beta generateContent)"""
     model = model or GEMINI_MODEL
     url = f"{GEMINI_URL_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
     
@@ -206,11 +208,9 @@ def call_gemini(prompt: str, model: str = None, timeout: int = 60):
         "generationConfig": {
             "temperature": 0.3,
             "maxOutputTokens": 4096,
-            # "response_mime_type" -> "responseMimeType" (camelCase로 복구)
-            "responseMimeType": "application/json", 
+            "responseMimeType": "application/json", # camelCase
         },
-        # "system_instruction" -> "systemInstruction" (camelCase로 복구)
-        "systemInstruction": { 
+        "systemInstruction": { # camelCase
             "parts": [{
                 "text": "You are a helpful assistant that generates company analysis data in JSON format. All textual content in the JSON values MUST be written in Korean."
             }]

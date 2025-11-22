@@ -1,10 +1,7 @@
-# app.py (최종 통합 버전: 뉴스+분석+웹서빙)
 import os
 import json
 import logging
 import requests
-import random
-import datetime
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
@@ -24,12 +21,12 @@ app = Flask(__name__)
 # CORS 설정: 로컬 테스트 편의를 위해 모든 출처 허용
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# === API 키 가져오기 ===
+# === API 키 ===
 DART_API_KEY = os.getenv('DART_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-09-2025')
 
-# 뉴스 검색용 네이버 API 키 (없으면 자동으로 테스트 모드)
+# 뉴스 검색용 네이버 API 키
 NAVER_CLIENT_ID = os.getenv('NAVER_CLIENT_ID')
 NAVER_CLIENT_SECRET = os.getenv('NAVER_CLIENT_SECRET')
 
@@ -107,7 +104,6 @@ def extract_json(text):
 @app.route('/')
 def home():
     try:
-        # 같은 폴더에 있는 index.html을 브라우저로 보냅니다.
         return send_file('index.html')
     except Exception as e:
         return f"<h3>index.html 파일을 찾을 수 없습니다.</h3><p>{e}</p>"
@@ -175,7 +171,6 @@ def analyze():
             return jsonify(json.loads(json_str))
         else:
             # 2차 복구
-            logger.warning("JSON 복구 시도...")
             res2 = call_gemini(f"Fix JSON:\n{text}")
             return jsonify(json.loads(extract_json(collect_text(res2.json()))))
     except Exception as e:
@@ -188,34 +183,56 @@ def news_summary():
     keyword = data.get('keyword')
     news_items = []
     
-    # 1. 네이버 API
+    # 1. 네이버 API 호출
     if NAVER_CLIENT_ID and NAVER_CLIENT_SECRET:
         try:
             url = "https://openapi.naver.com/v1/search/news.json"
             headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
             res = session.get(url, headers=headers, params={"query": keyword, "display": 5, "sort": "sim"})
+            
             if res.status_code == 200:
-                for item in res.json().get('items', []):
-                    news_items.append({"title": item['title'], "description": item['description'], "link": item['link'], "pubDate": item['pubDate']})
+                items = res.json().get('items', [])
+                for item in items:
+                    news_items.append({
+                        "title": item['title'],
+                        "description": item['description'],
+                        "link": item['link'],
+                        "pubDate": item['pubDate']
+                    })
+            else:
+                logger.error(f"네이버 API 오류: {res.status_code}")
         except Exception as e:
-            logger.error(f"네이버 API 에러: {e}")
+            logger.error(f"네이버 API 연동 실패: {e}")
 
-    # 2. Mock Data (API 키 없거나 에러 시)
-    
+    # 2. [수정] 뉴스 데이터가 없을 경우 (가짜 뉴스 생성 로직 제거됨)
+    if not news_items:
+        return jsonify({
+            'news_list': [],
+            'ai_summary': f"<b>'{keyword}'에 대한 최근 뉴스 검색 결과가 없습니다.</b><br>기업명을 다시 확인하거나, 네이버 API 키 설정을 확인해주세요."
+        })
 
-    # 3. Gemini 요약
+    # 3. Gemini 요약 (뉴스가 있을 때만 실행)
     summary = "요약에 실패했습니다."
     try:
-        news_text = "\n".join([f"{i+1}. {n['title']}: {n['description']}" for i, n in enumerate(news_items)])
-        prompt = f"다음 뉴스를 3줄로 요약해줘. HTML 태그(<ul>, <li>, <b>)만 사용해서:\n{news_text}"
+        news_text = "\n".join([
+            f"{i+1}. {n['title'].replace('<b>','').replace('</b>','')} : {n['description'].replace('<b>','').replace('</b>','')}" 
+            for i, n in enumerate(news_items)
+        ])
+        
+        prompt = f"다음 '{keyword}' 관련 뉴스들을 취업 면접 대비용으로 3줄로 핵심 요약해줘. HTML 태그(<ul>, <li>, <b>)를 사용해서 가독성 있게 출력해줘:\n{news_text}"
+        
         res = call_gemini(prompt)
         if res.status_code == 200:
-            summary = collect_text(res.json()).replace('```html', '').replace('```', '')
+            summary = collect_text(res.json()).replace('```html', '').replace('```', '').strip()
     except Exception as e:
-        logger.error(f"요약 에러: {e}")
+        logger.error(f"요약 생성 에러: {e}")
 
-    return jsonify({'news_list': news_items, 'ai_summary': summary})
+    return jsonify({
+        'news_list': news_items,
+        'ai_summary': summary
+    })
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, debug=True)
+    

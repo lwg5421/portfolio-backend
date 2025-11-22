@@ -7,7 +7,7 @@ from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 from dotenv import load_dotenv
 from lxml import etree
-from bs4 import BeautifulSoup # [필수] 크롤링
+from bs4 import BeautifulSoup 
 
 # ----------------------------
 # 1. 기본 설정
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# CORS 설정
+# CORS 설정 (모든 출처 허용)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # === API 키 ===
@@ -27,13 +27,10 @@ DART_API_KEY = os.getenv('DART_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-09-2025')
 
-# HTTP 세션
+# HTTP 세션 설정
 session = requests.Session()
-# [중요] 로봇이 아닌 척하기 위해 User-Agent를 최신 크롬 브라우저처럼 설정
 session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 })
 retries = Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])
 session.mount('https://', HTTPAdapter(max_retries=retries))
@@ -100,60 +97,45 @@ def extract_json(text):
         return text[start:end+1]
     return ""
 
-# [핵심] 강력해진 크롤링 함수
-def crawl_naver_news(keyword):
-    base_url = "https://search.naver.com/search.naver"
-    params = {
-        "where": "news",
-        "query": keyword,
-        "sort": "0", # 관련도순
-    }
+# [NEW] 구글 뉴스 RSS 가져오기 함수 (가장 안정적)
+def fetch_google_news(keyword):
+    """구글 뉴스 RSS 피드를 통해 뉴스를 가져옵니다."""
+    # RSS 주소: hl=ko(한국어), gl=KR(한국지역), ceid=KR:ko
+    rss_url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
     
     try:
-        response = session.get(base_url, params=params, timeout=5)
-        # 응답이 성공했는지 확인
+        response = session.get(rss_url, timeout=5)
         if response.status_code != 200:
-            logger.error(f"네이버 접속 실패: {response.status_code}")
+            logger.error(f"구글 뉴스 접속 실패: {response.status_code}")
             return []
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # XML 파싱 (BeautifulSoup 사용)
+        soup = BeautifulSoup(response.content, 'xml')
+        items = soup.find_all('item')
+        
         news_list = []
-        
-        # [수정] 더 확실한 태그(뉴스 제목 클래스)를 직접 찾음
-        # 'news_tit' 클래스는 네이버 뉴스 제목 링크의 고유 클래스입니다.
-        title_tags = soup.select("a.news_tit")
-        
-        if not title_tags:
-            logger.warning(f"'{keyword}' 검색 결과에서 뉴스 태그(news_tit)를 찾을 수 없습니다. HTML 구조가 다르거나 차단되었을 수 있습니다.")
-            # 디버깅용: HTML 앞부분 조금만 로그에 찍어봄
-            # logger.info(response.text[:500]) 
-            return []
+        for item in items[:5]: # 상위 5개만
+            title = item.title.text if item.title else "제목 없음"
+            link = item.link.text if item.link else "#"
+            pubDate = item.pubDate.text if item.pubDate else ""
+            
+            # 구글 뉴스 description에는 HTML 태그가 섞여있을 수 있어서 텍스트만 추출
+            raw_desc = item.description.text if item.description else ""
+            desc_soup = BeautifulSoup(raw_desc, 'html.parser')
+            description = desc_soup.get_text(strip=True)
 
-        for tag in title_tags[:5]: # 상위 5개
-            title = tag.get_text()
-            link = tag['href']
-            desc = "내용 요약 없음"
-            
-            # 설명글(dsc) 찾기: 제목 태그의 부모 영역 근처에 있음
-            # 보통 a.news_tit 옆이나 부모의 형제 요소에 div.news_dsc가 있음
-            parent_area = tag.find_parent('div', class_='news_area')
-            if parent_area:
-                dsc_tag = parent_area.select_one("div.news_dsc")
-                if dsc_tag:
-                    desc = dsc_tag.get_text(strip=True)
-            
             news_list.append({
                 "title": title,
-                "description": desc,
+                "description": description[:100] + "...", # 너무 길면 자름
                 "link": link,
-                "pubDate": "최근"
+                "pubDate": pubDate
             })
             
-        logger.info(f"크롤링 성공: {len(news_list)}개 수집됨")
+        logger.info(f"구글 뉴스 가져오기 성공: {len(news_list)}개")
         return news_list
 
     except Exception as e:
-        logger.error(f"크롤링 중 에러 발생: {e}")
+        logger.error(f"구글 뉴스 가져오기 실패: {e}")
         return []
 
 # ----------------------------
@@ -239,23 +221,23 @@ def news_summary():
     data = request.get_json()
     keyword = data.get('keyword')
     
-    logger.info(f"뉴스 크롤링 요청: {keyword}")
+    logger.info(f"구글 뉴스 요청: {keyword}")
 
-    # 1. 크롤링
-    news_items = crawl_naver_news(keyword)
+    # 1. 구글 뉴스 RSS 가져오기
+    news_items = fetch_google_news(keyword)
 
     # 2. 결과 없음 처리
     if not news_items:
         return jsonify({
             'news_list': [],
-            'ai_summary': f"<b>'{keyword}'에 대한 뉴스 검색 결과가 없습니다.</b><br>네이버 검색 페이지 구조가 변경되었거나, 서버 접근이 차단되었을 수 있습니다."
+            'ai_summary': f"<b>'{keyword}'에 대한 구글 뉴스 검색 결과가 없습니다.</b><br>기업명이나 검색어를 확인해주세요."
         })
 
     # 3. Gemini 요약
     summary = "요약 실패"
     try:
-        news_text = "\n".join([f"{i+1}. {n['title']}: {n['description']}" for i, n in enumerate(news_items)])
-        prompt = f"다음 '{keyword}' 관련 뉴스들을 취업 면접 대비용으로 3줄로 핵심 요약해줘. HTML 태그(<ul>, <li>, <b>)를 사용해서 출력해:\n{news_text}"
+        news_text = "\n".join([f"{i+1}. {n['title']}" for i, n in enumerate(news_items)]) # 구글 뉴스는 제목에 핵심이 다 있어서 제목만 보내도 됨
+        prompt = f"다음 '{keyword}' 관련 뉴스 제목들을 보고 취업 면접 대비용으로 3줄 핵심 요약해줘. HTML 태그(<ul>, <li>, <b>) 사용:\n{news_text}"
         
         res = call_gemini(prompt)
         if res.status_code == 200:

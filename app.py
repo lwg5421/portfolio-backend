@@ -1,3 +1,4 @@
+# app.py (네이버 API 키 없이 크롤링으로 뉴스 가져오는 버전)
 import os
 import json
 import logging
@@ -7,18 +8,19 @@ from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 from dotenv import load_dotenv
 from lxml import etree
+from bs4 import BeautifulSoup # [필수] 크롤링을 위해 추가됨
 
 # ----------------------------
 # 1. 기본 설정
 # ----------------------------
-load_dotenv() # .env 파일 로드
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# CORS 설정: 로컬 테스트 편의를 위해 모든 출처 허용
+# CORS 설정
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # === API 키 ===
@@ -26,13 +28,13 @@ DART_API_KEY = os.getenv('DART_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-09-2025')
 
-# 뉴스 검색용 네이버 API 키
-NAVER_CLIENT_ID = os.getenv('NAVER_CLIENT_ID')
-NAVER_CLIENT_SECRET = os.getenv('NAVER_CLIENT_SECRET')
+# 네이버 API 키는 더 이상 필요 없습니다! (삭제함)
 
-# HTTP 세션 설정 (재시도 로직)
+# HTTP 세션 설정
 session = requests.Session()
-session.headers.update({'User-Agent': 'portfolio-backend/1.0'})
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+})
 retries = Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 session.mount('http://', HTTPAdapter(max_retries=retries))
@@ -57,7 +59,7 @@ try:
         del context
         logger.info(f"기업 정보 로드 완료: {len(corp_name_map)}개")
     else:
-        logger.warning("CORPCODE.xml 파일이 없습니다. 검색 기능이 제한됩니다.")
+        logger.warning("CORPCODE.xml 파일이 없습니다.")
 except Exception as e:
     logger.error(f"XML 로드 에러: {e}")
 
@@ -98,15 +100,62 @@ def extract_json(text):
         return text[start:end+1]
     return ""
 
+# [NEW] 네이버 뉴스 크롤링 함수
+def crawl_naver_news(keyword):
+    """네이버 뉴스 검색 결과를 크롤링합니다."""
+    base_url = "https://search.naver.com/search.naver"
+    params = {
+        "where": "news",
+        "query": keyword,
+        "sort": "0", # 관련도순
+        "photo": "0",
+        "field": "0",
+        "pd": "0",
+        "ds": "",
+        "de": "",
+        "cluster_rank": "1",
+        "mynews": "0",
+        "office_type": "0",
+        "office_section_code": "0",
+        "news_office_checked": "",
+        "nso": "so:r,p:all,a:all",
+        "start": "1"
+    }
+    
+    try:
+        response = session.get(base_url, params=params, timeout=5)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        news_list = []
+        # 네이버 뉴스 리스트 선택자 (변경될 수 있음)
+        items = soup.select("ul.list_news > li")
+        
+        for item in items[:5]: # 상위 5개만
+            title_tag = item.select_one("a.news_tit")
+            desc_tag = item.select_one("div.news_dsc")
+            
+            if title_tag and desc_tag:
+                news_list.append({
+                    "title": title_tag.get_text(),
+                    "description": desc_tag.get_text(),
+                    "link": title_tag['href'],
+                    "pubDate": "최근" # 크롤링은 정확한 날짜 파싱이 복잡해서 생략
+                })
+        return news_list
+    except Exception as e:
+        logger.error(f"크롤링 실패: {e}")
+        return []
+
 # ----------------------------
-# 4. [핵심] 웹페이지 보여주기
+# 4. 웹페이지 서빙
 # ----------------------------
 @app.route('/')
 def home():
     try:
         return send_file('index.html')
     except Exception as e:
-        return f"<h3>index.html 파일을 찾을 수 없습니다.</h3><p>{e}</p>"
+        return f"index.html 파일이 없습니다. {e}"
 
 # ----------------------------
 # 5. API 엔드포인트
@@ -170,7 +219,6 @@ def analyze():
         if json_str:
             return jsonify(json.loads(json_str))
         else:
-            # 2차 복구
             res2 = call_gemini(f"Fix JSON:\n{text}")
             return jsonify(json.loads(extract_json(collect_text(res2.json()))))
     except Exception as e:
@@ -179,46 +227,26 @@ def analyze():
 
 @app.route('/api/news-summary', methods=['POST'])
 def news_summary():
+    """크롤링을 이용한 뉴스 검색 및 AI 요약"""
     data = request.get_json()
     keyword = data.get('keyword')
-    news_items = []
     
-    # 1. 네이버 API 호출
-    if NAVER_CLIENT_ID and NAVER_CLIENT_SECRET:
-        try:
-            url = "https://openapi.naver.com/v1/search/news.json"
-            headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
-            res = session.get(url, headers=headers, params={"query": keyword, "display": 5, "sort": "sim"})
-            
-            if res.status_code == 200:
-                items = res.json().get('items', [])
-                for item in items:
-                    news_items.append({
-                        "title": item['title'],
-                        "description": item['description'],
-                        "link": item['link'],
-                        "pubDate": item['pubDate']
-                    })
-            else:
-                logger.error(f"네이버 API 오류: {res.status_code}")
-        except Exception as e:
-            logger.error(f"네이버 API 연동 실패: {e}")
+    logger.info(f"뉴스 크롤링 요청: {keyword}")
 
-    # 2. [수정] 뉴스 데이터가 없을 경우 (가짜 뉴스 생성 로직 제거됨)
+    # 1. 크롤링으로 뉴스 가져오기
+    news_items = crawl_naver_news(keyword)
+
+    # 2. 뉴스가 없으면 안내 메시지
     if not news_items:
         return jsonify({
             'news_list': [],
-            'ai_summary': f"<b>'{keyword}'에 대한 최근 뉴스 검색 결과가 없습니다.</b><br>기업명을 다시 확인하거나, 네이버 API 키 설정을 확인해주세요."
+            'ai_summary': f"<b>'{keyword}'에 대한 뉴스 검색 결과가 없습니다.</b><br>네이버 검색 페이지 구조가 변경되었거나, 검색어가 너무 특이할 수 있습니다."
         })
 
-    # 3. Gemini 요약 (뉴스가 있을 때만 실행)
+    # 3. Gemini 요약
     summary = "요약에 실패했습니다."
     try:
-        news_text = "\n".join([
-            f"{i+1}. {n['title'].replace('<b>','').replace('</b>','')} : {n['description'].replace('<b>','').replace('</b>','')}" 
-            for i, n in enumerate(news_items)
-        ])
-        
+        news_text = "\n".join([f"{i+1}. {n['title']}: {n['description']}" for i, n in enumerate(news_items)])
         prompt = f"다음 '{keyword}' 관련 뉴스들을 취업 면접 대비용으로 3줄로 핵심 요약해줘. HTML 태그(<ul>, <li>, <b>)를 사용해서 가독성 있게 출력해줘:\n{news_text}"
         
         res = call_gemini(prompt)
@@ -227,12 +255,8 @@ def news_summary():
     except Exception as e:
         logger.error(f"요약 생성 에러: {e}")
 
-    return jsonify({
-        'news_list': news_items,
-        'ai_summary': summary
-    })
+    return jsonify({'news_list': news_items, 'ai_summary': summary})
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, debug=True)
-    

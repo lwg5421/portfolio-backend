@@ -1,7 +1,8 @@
 # requirements.txt
-Flask
-Flask-Cors
+flask
+flask-cors
 requests
 python-dotenv
-gunicorn
 lxml
+beautifulsoup4
+gunicorn

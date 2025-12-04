@@ -152,21 +152,18 @@ def home():
     except Exception as e:
         return f"<h3>index.html 파일을 찾을 수 없습니다.</h3><p>app.py와 같은 폴더에 있는지 확인해주세요.<br>에러: {e}</p>"
 
-# [추가할 코드] robots.txt 자동 생성
+# ▼▼▼ [중요] 네이버 검색 노출을 위한 코드 (추가됨) ▼▼▼
 @app.route('/robots.txt')
 def robots():
-    # 모든 검색 로봇의 접근을 허용한다는 뜻입니다.
     lines = [
         "User-agent: *",
         "Allow: /",
-        f"Sitemap: https://notnull.kr/sitemap.xml"  # 도메인 연결 후 실제 주소로
+        f"Sitemap: https://notnull.kr/sitemap.xml"  # 도메인 연결 후 실제 주소로 인식됨
     ]
     return "\n".join(lines), 200, {'Content-Type': 'text/plain'}
 
-# [추가할 코드] sitemap.xml (사이트 지도) - 선택 사항이지만 추천
 @app.route('/sitemap.xml')
 def sitemap():
-    # 간단한 사이트맵 XML 반환
     xml = """<?xml version="1.0" encoding="UTF-8"?>
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
         <url>
@@ -176,6 +173,7 @@ def sitemap():
         </url>
     </urlset>"""
     return xml, 200, {'Content-Type': 'application/xml'}
+# ▲▲▲ [여기까지 추가됨] ▲▲▲
 
 # 404 에러 핸들러 (HTML 대신 JSON 반환)
 @app.errorhandler(404)
@@ -305,4 +303,3 @@ if __name__ == '__main__':
     # Render에서는 PORT 환경변수를 사용
     port = int(os.getenv('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, debug=True)
-
